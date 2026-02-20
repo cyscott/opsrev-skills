@@ -1,72 +1,188 @@
 ---
 name: notion-workspace-opsrev
-description: "Use when the user asks to find, read, summarize, analyze, create, or update Notion pages, databases, blocks, and comments through the connected OpsRev Notion integration."
+description: |
+  Notion API integration through the OpsRev managed OAuth gateway. Read, query, create, and update Notion pages, databases, blocks, and comments by proxying native Notion API routes. Use this skill when users ask to work with Notion content.
+compatibility: Requires network access and configured OpsRev connector env vars in the bot runtime.
+metadata:
+  author: opsrev
+  version: "2.0"
+  clawdbot:
+    emoji: "🧠"
+    requires:
+      env:
+        - OPSREV_CONNECTOR_URL
+        - OPSREV_BOT_ID
+        - OPSREV_ORG_ID
 ---
 
-# Notion Workspace OpsRev
+# Notion via OpsRev OAuth Gateway
 
-## Goal
-Use connected Notion data safely and quickly for discovery, retrieval, summaries, structured analysis, and content updates.
+Use the OpsRev connector proxy to call native Notion API routes with managed OAuth.
 
-## Tooling
+## Base URL
 
-### Read tools
-- `notion_search` / `notion-search` — search pages and databases
-- `notion_list_databases` / `notion-query-data-sources` — list databases
-- `notion_query_database` / `notion-query-database-view` — query a database with filters/sorts
-- `notion_get_page` / `notion-fetch` — get page metadata/properties
-- `notion_get_page_content` — get block children for a page or block
-- `notion_get_comments` / `notion-get-comments` — list comments for a page or block
+```
+$OPSREV_CONNECTOR_URL/api/v1/notion/{native-notion-path}
+```
 
-### Write tools
-- `notion_create_page` / `notion-create-pages` / `create-a-page` — create a page
-- `notion_update_page` / `notion-update-page` / `update-a-page` — update page properties/metadata
-- `notion_append_block` / `notion-append-a-block` / `append-a-block` — append blocks
-- `notion_update_block` / `notion-update-a-block` / `update-a-block` — update a block
-- `notion_delete_block` / `notion-delete-a-block` / `delete-a-block` — delete a block
-- `notion_create_database` / `notion-create-database` / `create-a-data-source` — create a database
-- `notion_create_comment` / `notion-create-comment` / `create-a-comment` — create a comment
+Examples:
+- `search`
+- `pages/{page_id}`
+- `databases/{database_id}/query`
+- `blocks/{block_id}/children`
+- `comments`
 
-Use canonical names (`notion_*`) by default. Aliases are for compatibility.
+## Required Headers
 
-## Workflow
+Always include:
+- `X-Bot-Id: $OPSREV_BOT_ID`
+- `X-Org-Id: $OPSREV_ORG_ID`
+- `Content-Type: application/json` (for POST/PATCH)
 
-### Reading & Analysis
-1. Confirm intent in one sentence (search, summarize, extract, compare, or report).
-2. Discover targets with `notion_search` or `notion_list_databases`.
-3. Pull details with `notion_get_page`, `notion_get_page_content`, or `notion_query_database`.
-4. Return the answer first, then include source object IDs/titles used.
-5. If results are empty or permission-limited, say that explicitly and suggest reconnecting Notion or sharing the page/database with the integration.
+Optional:
+- `X-User-Id: <opsrev_user_uuid>` to force user-scoped tokens. If omitted, proxy falls back to org-scoped connection.
 
-### Creating Pages
-1. Ask for parent target (page or database), title, and desired content.
-2. Discover IDs first (use search/list/query tools).
-3. Call `notion_create_page` with:
-   - `parent` object (`{ "page_id": "..." }` or `{ "database_id": "..." }`)
-   - `properties` for title/database fields
-   - optional `children` block array
-4. Return the created page URL/ID and what was set.
+## Quick Connectivity Check
 
-### Updating Pages
-1. Resolve the page ID.
-2. Call `notion_update_page` with only the fields to change.
-3. Confirm exactly what changed.
+Run this first when user asks to verify Notion connectivity.
 
-### Working with Blocks
-1. Use `notion_get_page_content` to inspect existing block structure first.
-2. For new content, call `notion_append_block`.
-3. For edits, call `notion_update_block`.
-4. For removals, call `notion_delete_block`.
-5. Return affected block IDs.
+```bash
+python <<'PY'
+import json, os, urllib.request
 
-### Databases and Comments
-1. Create databases with `notion_create_database` using explicit `parent`, `title`, and `properties`.
-2. Add comments with `notion_create_comment` using `discussionId` or `pageId`/`blockId`.
-3. Confirm returned IDs/URLs.
+base = os.environ['OPSREV_CONNECTOR_URL'].rstrip('/')
+url = f"{base}/api/v1/notion/search"
+body = json.dumps({
+  "query": "",
+  "page_size": 1,
+  "filter": {"value": "page", "property": "object"}
+}).encode('utf-8')
 
-## Response Rules
-- Do not invent Notion content.
-- Keep results concise and decision-oriented.
-- Prefer structured output for ops use cases (table-like bullets with owner, status, due date, blockers).
-- When confidence is low, ask one targeted follow-up question.
-- After any write, summarize exactly what was created/changed and include returned IDs/URLs.
+req = urllib.request.Request(url, data=body, method='POST')
+req.add_header('Content-Type', 'application/json')
+req.add_header('X-Bot-Id', os.environ['OPSREV_BOT_ID'])
+req.add_header('X-Org-Id', os.environ['OPSREV_ORG_ID'])
+
+with urllib.request.urlopen(req) as res:
+  print(json.dumps(json.load(res), indent=2))
+PY
+```
+
+## Native Route Patterns
+
+### Search
+
+```bash
+POST /search
+```
+
+Body example:
+
+```json
+{
+  "query": "Q1 pipeline",
+  "page_size": 20
+}
+```
+
+### Get Page
+
+```bash
+GET /pages/{page_id}
+```
+
+### Get Page Content (block children)
+
+```bash
+GET /blocks/{block_id}/children?page_size=100
+```
+
+### Query Database
+
+```bash
+POST /databases/{database_id}/query
+```
+
+### Create Page
+
+```bash
+POST /pages
+Content-Type: application/json
+```
+
+### Update Page
+
+```bash
+PATCH /pages/{page_id}
+Content-Type: application/json
+```
+
+### Append Blocks
+
+```bash
+POST /blocks/{block_id}/children
+Content-Type: application/json
+```
+
+### Update Block
+
+```bash
+PATCH /blocks/{block_id}
+Content-Type: application/json
+```
+
+### Delete Block
+
+```bash
+DELETE /blocks/{block_id}
+```
+
+### Create Database
+
+```bash
+POST /databases
+Content-Type: application/json
+```
+
+### Comments
+
+```bash
+GET /comments?block_id={page_or_block_id}
+POST /comments
+```
+
+## Working Rules
+
+1. Use native Notion request/response shapes. Do not invent schema fields.
+2. For writes, fetch current object first when possible.
+3. Return answer first, then include object IDs/URLs changed.
+4. If proxy returns connection/auth errors, state exact error and instruct user to reconnect Notion in OpsRev Connectors.
+5. Keep outputs concise and decision-oriented.
+
+## Error Semantics
+
+- `403` usually means no usable connector token (not connected, expired, or missing access token).
+- `400/404/409` are typically native Notion API validation/resource errors.
+- Proxy wraps successful responses as `{ "data": ... }`.
+
+## Useful Generic Python Helper
+
+```bash
+python <<'PY'
+import json, os, urllib.request
+
+def call(method, path, payload=None):
+  base = os.environ['OPSREV_CONNECTOR_URL'].rstrip('/')
+  url = f"{base}/api/v1/notion/{path.lstrip('/')}"
+  body = None if payload is None else json.dumps(payload).encode('utf-8')
+  req = urllib.request.Request(url, data=body, method=method)
+  req.add_header('X-Bot-Id', os.environ['OPSREV_BOT_ID'])
+  req.add_header('X-Org-Id', os.environ['OPSREV_ORG_ID'])
+  if payload is not None:
+    req.add_header('Content-Type', 'application/json')
+  with urllib.request.urlopen(req) as res:
+    return json.load(res)
+
+print(json.dumps(call('POST', 'search', {'query': '', 'page_size': 3}), indent=2))
+PY
+```
